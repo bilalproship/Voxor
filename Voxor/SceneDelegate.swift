@@ -28,6 +28,13 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
     private func handleURL(_ url: URL) {
         guard url.scheme == "voxor", url.host == "startRecording" else { return }
+        // Auto-enable the mic when the keyboard opens the app so the user
+        // doesn't have to re-enable it manually.
+        if !(VoxorIPC.sharedDefaults?.bool(forKey: VoxorIPC.isMicEnabledKey) ?? true) {
+            VoxorIPC.sharedDefaults?.set(true, forKey: VoxorIPC.isMicEnabledKey)
+            VoxorIPC.sharedDefaults?.synchronize()
+            DarwinNotifier.shared.post(VoxorIPC.micStateChangedName)
+        }
         SimulationManager.shared.start()
     }
 

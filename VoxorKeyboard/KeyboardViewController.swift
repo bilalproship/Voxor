@@ -46,6 +46,8 @@ class KeyboardViewController: UIInputViewController {
     private var simulationObserverToken: UUID?
     /// Token for the simulationDone observer (paste-on-return path).
     private var simDoneObserverToken: UUID?
+    /// Token for the global mic-enabled state observer.
+    private var micStateToken: UUID?
     /// True from the moment the user taps mic until the result is pasted.
     private var isMicWaiting = false
 
@@ -78,6 +80,7 @@ class KeyboardViewController: UIInputViewController {
         buildKeyboard()
         registerSimulationObserver()
         registerSimulationDoneObserver()
+        registerMicStateObserver()
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -527,6 +530,40 @@ class KeyboardViewController: UIInputViewController {
         kbLog.debug("registerSimulationDoneObserver: observer registered")
     }
 
+    /// Observes the global mic-enabled state so the button icon/colour stays in sync
+    /// with whatever the user toggles in the main app.
+    private func registerMicStateObserver() {
+        guard micStateToken == nil else { return }
+        micStateToken = DarwinNotifier.shared.observe(VoxorIPC.micStateChangedName) { [weak self] in
+            self?.updateMicButtonState()
+        }
+        kbLog.debug("registerMicStateObserver: observer registered")
+    }
+
+    /// Shows a brief banner informing the user the mic is disabled in the main app.
+    private func showMicDisabledBanner() {
+        let banner = UILabel()
+        banner.text = "Microphone is disabled — open Voxor to enable it"
+        banner.font = .systemFont(ofSize: 11, weight: .medium)
+        banner.textColor = .white
+        banner.backgroundColor = UIColor.systemGray.withAlphaComponent(0.92)
+        banner.textAlignment = .center
+        banner.numberOfLines = 2
+        banner.layer.cornerRadius = 8
+        banner.layer.masksToBounds = true
+        banner.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(banner)
+        NSLayoutConstraint.activate([
+            banner.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 8),
+            banner.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8),
+            banner.topAnchor.constraint(equalTo: view.topAnchor, constant: 4),
+            banner.heightAnchor.constraint(equalToConstant: 36),
+        ])
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            banner.removeFromSuperview()
+        }
+    }
+
     /// Reads the latest live_text chunk from the shared App Group and inserts it
     /// into the active text field, replacing any previously inserted chunk.
     /// Duplicate chunks (same text as last time) are skipped.
@@ -600,7 +637,23 @@ class KeyboardViewController: UIInputViewController {
     // MARK: - Mic button state
 
     private func updateMicButtonState() {
-        if isMicWaiting {
+        let isGloballyEnabled = VoxorIPC.sharedDefaults?.bool(forKey: VoxorIPC.isMicEnabledKey) ?? true
+
+        if !isGloballyEnabled {
+            micBtn?.layer.removeAnimation(forKey: "micPulse")
+            micBtn?.setImage(UIImage(systemName: "mic.slash"), for: .normal)
+            micBtn?.tintColor = .systemRed
+            // Cancel any in-flight wait since the mic is now off
+            if isMicWaiting {
+                isMicWaiting = false
+                lastInsertedSimText = ""
+            }
+        } else if isRecording {
+            micBtn?.layer.removeAnimation(forKey: "micPulse")
+            micBtn?.setImage(UIImage(systemName: "mic.fill"), for: .normal)
+            micBtn?.tintColor = .systemGreen
+        } else if isMicWaiting {
+            micBtn?.setImage(UIImage(systemName: "mic.fill"), for: .normal)
             micBtn?.tintColor = .systemOrange
             if micBtn?.layer.animation(forKey: "micPulse") == nil {
                 let anim          = CABasicAnimation(keyPath: "opacity")
@@ -613,7 +666,8 @@ class KeyboardViewController: UIInputViewController {
             }
         } else {
             micBtn?.layer.removeAnimation(forKey: "micPulse")
-            micBtn?.tintColor = isDark ? .white : .label
+            micBtn?.setImage(UIImage(systemName: "mic.fill"), for: .normal)
+            micBtn?.tintColor = .systemRed
         }
     }
 
@@ -627,6 +681,10 @@ class KeyboardViewController: UIInputViewController {
             showFullAccessBanner()
             return
         }
+//        guard VoxorIPC.sharedDefaults?.bool(forKey: VoxorIPC.isMicEnabledKey) ?? true else {
+//            showMicDisabledBanner()
+//            return
+//        }
         // Clear any unconsumed result from a previous session before starting fresh.
         VoxorIPC.sharedDefaults?.set(false, forKey: VoxorIPC.hasPendingPasteKey)
         VoxorIPC.sharedDefaults?.removeObject(forKey: VoxorIPC.liveTextKey)
@@ -674,67 +732,6 @@ class KeyboardViewController: UIInputViewController {
         kbLog.debug("showFullAccessBanner: hasFullAccess=false")
     }
 
-    private func requestAndStart() {
-        SFSpeechRecognizer.requestAuthorization { [weak self] authStatus in
-            guard authStatus == .authorized else { return }
-            AVAudioSession.sharedInstance().requestRecordPermission { granted in
-                guard granted else { return }
-                DispatchQueue.main.async { self?.startDictation() }
-            }
-        }
-    }
-
-    private func startDictation() {
-        guard let recognizer = speechRecognizer, recognizer.isAvailable,
-              !audioEngine.isRunning else { return }
-
-        do {
-            try AVAudioSession.sharedInstance().setCategory(.record, mode: .measurement,
-                                                            options: .duckOthers)
-            try AVAudioSession.sharedInstance().setActive(true,
-                                                          options: .notifyOthersOnDeactivation)
-        } catch { return }
-
-        recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
-        recognitionRequest?.shouldReportPartialResults = true
-
-        let node = audioEngine.inputNode
-        node.installTap(onBus: 0, bufferSize: 1024, format: node.outputFormat(forBus: 0)) { [weak self] buf, _ in
-            self?.recognitionRequest?.append(buf)
-        }
-        audioEngine.prepare()
-        guard (try? audioEngine.start()) != nil else { return }
-
-        isRecording  = true
-        dictatedLength = 0
-        micBtn?.tintColor = .systemRed
-
-        recognitionTask = recognizer.recognitionTask(with: recognitionRequest!) { [weak self] result, error in
-            guard let self else { return }
-            if let result {
-                let text = result.bestTranscription.formattedString
-                // Delete the previous partial result, then insert updated transcription
-                for _ in 0..<self.dictatedLength { self.textDocumentProxy.deleteBackward() }
-                self.textDocumentProxy.insertText(text)
-                self.dictatedLength = text.count
-                if result.isFinal { self.stopDictation() }
-            }
-            if error != nil { self.stopDictation() }
-        }
-    }
-
-    private func stopDictation() {
-        audioEngine.stop()
-        audioEngine.inputNode.removeTap(onBus: 0)
-        recognitionRequest?.endAudio()
-        recognitionRequest = nil
-        recognitionTask?.cancel()
-        recognitionTask   = nil
-        isRecording       = false
-        dictatedLength    = 0
-        micBtn?.tintColor = .label
-        try? AVAudioSession.sharedInstance().setActive(false)
-    }
 
     // MARK: - UIInputViewController callbacks
 

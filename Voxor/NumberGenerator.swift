@@ -52,6 +52,12 @@ enum VoxorIPC {
     /// cleared to `false` by the keyboard once it has pasted the result.
     static let hasPendingPasteKey  = "voxor.hasPendingPaste"
 
+    /// `true` while the microphone is globally enabled by the user.
+    static let isMicEnabledKey     = "voxor.micEnabled"
+
+    /// Posted whenever the global mic-enabled state changes (enable or disable).
+    static let micStateChangedName = "com.edu.practice.Voxor.micStateChanged"
+
     /// Shared UserDefaults backed by the App Group container.
     static var sharedDefaults: UserDefaults? {
         UserDefaults(suiteName: appGroupID)

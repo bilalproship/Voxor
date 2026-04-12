@@ -35,6 +35,7 @@ final class SimulationManager {
 
     /// Starts (or restarts) a live dictation session.
     func start() {
+        guard VoxorIPC.sharedDefaults?.bool(forKey: VoxorIPC.isMicEnabledKey) ?? true else { return }
         stop()   // cancel any in-flight session
         reset()
 

@@ -22,6 +22,7 @@ class ViewController: UIViewController {
     // MARK: - UI
 
     private let pulseDot           = UIView()
+    private let micIconView        = UIImageView()
     private let waveformStack      = UIStackView()
     private let transcriptionCard  = UIView()
     private let transcriptionLabel = UILabel()
@@ -37,8 +38,9 @@ class ViewController: UIViewController {
 
     // MARK: - IPC tokens
 
-    private var simUpdateToken: UUID?
-    private var simDoneToken:   UUID?
+    private var simUpdateToken:  UUID?
+    private var simDoneToken:    UUID?
+    private var micEnabledToken: UUID?
 
     // MARK: - Lifecycle
 
@@ -51,15 +53,16 @@ class ViewController: UIViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         isDone = false
-        pulseDot.backgroundColor = .systemRed
         pulseDot.transform = .identity
         registerObservers()
+        registerMicStateObserver()
         syncFromSharedState()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         removeObservers()
+        removeMicStateObserver()
         stopWaveform()
     }
 
@@ -86,16 +89,19 @@ class ViewController: UIViewController {
         subtitleLabel.textColor = .secondaryLabel
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        // ── Pulse dot ────────────────────────────────────────────────
-        pulseDot.backgroundColor = .systemRed
+        // ── Pulse dot (tap to toggle mic enabled/disabled) ───────────
+        pulseDot.backgroundColor = .systemBlue
         pulseDot.layer.cornerRadius = 40
         pulseDot.translatesAutoresizingMaskIntoConstraints = false
+        pulseDot.isUserInteractionEnabled = true
+        let tap = UITapGestureRecognizer(target: self, action: #selector(micToggleTapped))
+        pulseDot.addGestureRecognizer(tap)
 
-        let micIcon = UIImageView(image: UIImage(systemName: "mic.fill"))
-        micIcon.tintColor = .white
-        micIcon.contentMode = .scaleAspectFit
-        micIcon.translatesAutoresizingMaskIntoConstraints = false
-        pulseDot.addSubview(micIcon)
+        micIconView.image = UIImage(systemName: "mic.fill")
+        micIconView.tintColor = .white
+        micIconView.contentMode = .scaleAspectFit
+        micIconView.translatesAutoresizingMaskIntoConstraints = false
+        pulseDot.addSubview(micIconView)
 
         // ── Waveform bars ────────────────────────────────────────────
         waveformStack.axis         = .horizontal
@@ -173,10 +179,10 @@ class ViewController: UIViewController {
             pulseDot.widthAnchor.constraint(equalToConstant: 80),
             pulseDot.heightAnchor.constraint(equalToConstant: 80),
 
-            micIcon.centerXAnchor.constraint(equalTo: pulseDot.centerXAnchor),
-            micIcon.centerYAnchor.constraint(equalTo: pulseDot.centerYAnchor),
-            micIcon.widthAnchor.constraint(equalToConstant: 36),
-            micIcon.heightAnchor.constraint(equalToConstant: 36),
+            micIconView.centerXAnchor.constraint(equalTo: pulseDot.centerXAnchor),
+            micIconView.centerYAnchor.constraint(equalTo: pulseDot.centerYAnchor),
+            micIconView.widthAnchor.constraint(equalToConstant: 36),
+            micIconView.heightAnchor.constraint(equalToConstant: 36),
 
             waveformStack.topAnchor.constraint(equalTo: pulseDot.bottomAnchor, constant: 24),
             waveformStack.centerXAnchor.constraint(equalTo: view.centerXAnchor),
@@ -279,6 +285,10 @@ class ViewController: UIViewController {
     /// Populates UI from shared state in case the VC appears after recognition
     /// has already started (e.g. app was relaunched mid-session).
     private func syncFromSharedState() {
+        updateMicToggleAppearance()
+
+        guard VoxorIPC.sharedDefaults?.bool(forKey: VoxorIPC.isMicEnabledKey) ?? true else { return }
+
         let isRecording = VoxorIPC.sharedDefaults?.bool(forKey: VoxorIPC.isRecordingKey) ?? false
         let isFinished  = VoxorIPC.sharedDefaults?.bool(forKey: VoxorIPC.isFinishedKey)  ?? false
         let text        = VoxorIPC.sharedDefaults?.string(forKey: VoxorIPC.liveTextKey)  ?? ""
@@ -289,6 +299,96 @@ class ViewController: UIViewController {
             onDone()
         } else if isRecording {
             startWaveform()
+        } else {
+            // App was opened directly (not via the keyboard URL scheme) — start a fresh session.
+            SimulationManager.shared.start()
+        }
+    }
+
+    // MARK: - Mic toggle (pulseDot tap gesture)
+
+    @objc private func micToggleTapped() {
+        let isEnabled = VoxorIPC.sharedDefaults?.bool(forKey: VoxorIPC.isMicEnabledKey) ?? true
+        let newState  = !isEnabled
+        VoxorIPC.sharedDefaults?.set(newState, forKey: VoxorIPC.isMicEnabledKey)
+        VoxorIPC.sharedDefaults?.synchronize()
+
+        if !newState {
+            SimulationManager.shared.stop()
+            clearSharedDefaults()
+        } else {
+            SimulationManager.shared.start()
+        }
+
+        DarwinNotifier.shared.post(VoxorIPC.micStateChangedName)
+        updateMicToggleAppearance()
+    }
+
+    /// Master appearance-setter for the pulseDot. Must be called on the main queue.
+    private func updateMicToggleAppearance() {
+        let isEnabled   = VoxorIPC.sharedDefaults?.bool(forKey: VoxorIPC.isMicEnabledKey) ?? true
+        let isRecording = VoxorIPC.sharedDefaults?.bool(forKey: VoxorIPC.isRecordingKey)  ?? false
+
+        if !isEnabled {
+            pulseDot.layer.removeAnimation(forKey: "pulse")
+            pulseDot.transform = .identity
+            pulseDot.backgroundColor = .systemGray3
+            micIconView.image = UIImage(systemName: "mic.slash")
+            stopWaveform()
+            isDone = false
+            UIView.transition(with: transcriptionCard, duration: 0.2, options: .transitionCrossDissolve) {
+                self.placeholderLabel.isHidden   = false
+                self.transcriptionLabel.isHidden = true
+                self.transcriptionLabel.text     = ""
+            }
+            UIView.transition(with: statusLabel, duration: 0.2, options: .transitionCrossDissolve) {
+                self.statusLabel.text      = "Microphone Off"
+                self.statusLabel.textColor = .secondaryLabel
+            }
+            UIView.transition(with: hintLabel, duration: 0.2, options: .transitionCrossDissolve) {
+                self.hintLabel.text = "Tap the microphone to enable"
+            }
+        } else if isDone {
+            // Done state colours already set by showDoneState() — just ensure icon is correct.
+            micIconView.image = UIImage(systemName: "mic.fill")
+        } else if isRecording {
+            pulseDot.backgroundColor = .systemRed
+            micIconView.image = UIImage(systemName: "mic.fill")
+        } else {
+            pulseDot.layer.removeAnimation(forKey: "pulse")
+            pulseDot.transform = .identity
+            pulseDot.backgroundColor = .systemBlue
+            micIconView.image = UIImage(systemName: "mic.fill")
+            UIView.transition(with: statusLabel, duration: 0.2, options: .transitionCrossDissolve) {
+                self.statusLabel.text      = "Ready"
+                self.statusLabel.textColor = .systemBlue
+            }
+            UIView.transition(with: hintLabel, duration: 0.2, options: .transitionCrossDissolve) {
+                self.hintLabel.text = "Use the mic button in the keyboard to start recording"
+            }
+        }
+    }
+
+    private func clearSharedDefaults() {
+        let d = VoxorIPC.sharedDefaults
+        d?.removeObject(forKey: VoxorIPC.liveTextKey)
+        d?.set(false, forKey: VoxorIPC.isFinishedKey)
+        d?.set(false, forKey: VoxorIPC.isRecordingKey)
+        d?.set(false, forKey: VoxorIPC.hasPendingPasteKey)
+        d?.synchronize()
+    }
+
+    private func registerMicStateObserver() {
+        guard micEnabledToken == nil else { return }
+        micEnabledToken = DarwinNotifier.shared.observe(VoxorIPC.micStateChangedName) { [weak self] in
+            self?.updateMicToggleAppearance()
+        }
+    }
+
+    private func removeMicStateObserver() {
+        if let t = micEnabledToken {
+            DarwinNotifier.shared.remove(name: VoxorIPC.micStateChangedName, id: t)
+            micEnabledToken = nil
         }
     }
 

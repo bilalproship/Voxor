@@ -15,6 +15,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        // Default mic to enabled on first launch so new users can start immediately.
+        VoxorIPC.sharedDefaults?.register(defaults: [VoxorIPC.isMicEnabledKey: true])
         startListeningForNumberRequests()
         startListeningForRecordingRequests()
         return true
