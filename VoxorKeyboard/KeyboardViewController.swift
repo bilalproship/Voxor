@@ -56,7 +56,6 @@ class KeyboardViewController: UIInputViewController {
     private weak var shiftBtn:  UIButton?
     private weak var micBtn:    UIButton?
     private weak var nextKbdBtn: UIButton?
-    private weak var randBtn:   UIButton?
 
     // MARK: - Layout constants
 
@@ -106,13 +105,11 @@ class KeyboardViewController: UIInputViewController {
         let paste = tbBtn(icon: "doc.on.clipboard",    sel: #selector(pasteTapped))
         let globe = tbBtn(icon: "globe",               sel: #selector(handleInputModeList(from:with:)),
                           allTouchEvents: true)
-        let rand  = tbBtn(title: "Rand #",             sel: #selector(randTapped))
 
         micBtn     = mic
         nextKbdBtn = globe
-        randBtn    = rand
 
-        [mic, paste, rand, globe].forEach { bar.addSubview($0) }
+        [mic, paste, globe].forEach { bar.addSubview($0) }
 
         let sep = UIView()
         sep.backgroundColor = .separator
@@ -134,11 +131,7 @@ class KeyboardViewController: UIInputViewController {
             paste.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
             paste.widthAnchor.constraint(equalToConstant: 36),
             paste.heightAnchor.constraint(equalToConstant: 36),
-
-            rand.leadingAnchor.constraint(equalTo: paste.trailingAnchor, constant: 8),
-            rand.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
-            rand.heightAnchor.constraint(equalToConstant: 28),
-
+ 
             globe.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -10),
             globe.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
             globe.widthAnchor.constraint(equalToConstant: 36),
@@ -750,7 +743,6 @@ class KeyboardViewController: UIInputViewController {
         // Apply mic waiting state first, then fall back to appearance-based tint.
         updateMicButtonState()
         nextKbdBtn?.tintColor = isDark ? .white : .label
-        randBtn?.tintColor    = isDark ? .white : .label
 
         renderKeys()
         // Safety-net: paste any result that arrived while the keyboard was away.
