@@ -75,6 +75,10 @@ class KeyboardViewController: UIInputViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // Report keyboard state so the main app settings screen can read it.
+        VoxorIPC.sharedDefaults?.set(true,          forKey: VoxorIPC.keyboardEnabledKey)
+        VoxorIPC.sharedDefaults?.set(hasFullAccess, forKey: VoxorIPC.keyboardFullAccessKey)
+        VoxorIPC.sharedDefaults?.synchronize()
         buildToolbar()
         buildKeyboard()
         registerSimulationObserver()

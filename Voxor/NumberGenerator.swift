@@ -58,6 +58,12 @@ enum VoxorIPC {
     /// Posted whenever the global mic-enabled state changes (enable or disable).
     static let micStateChangedName = "com.edu.practice.Voxor.micStateChanged"
 
+    /// `true` once the VoxorKeyboard extension has loaded at least once (keyboard is enabled).
+    static let keyboardEnabledKey    = "voxor.keyboardEnabled"
+
+    /// Mirrors `UIInputViewController.hasFullAccess`; written by the keyboard on every load.
+    static let keyboardFullAccessKey = "voxor.keyboardFullAccess"
+
     /// Shared UserDefaults backed by the App Group container.
     static var sharedDefaults: UserDefaults? {
         UserDefaults(suiteName: appGroupID)

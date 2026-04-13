@@ -13,8 +13,16 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
 
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
-        guard let _ = (scene as? UIWindowScene) else { return }
-        // Handle URL if app was cold-launched via yourapp://startRecording
+        guard let windowScene = scene as? UIWindowScene else { return }
+
+        // Build the window programmatically so SettingsViewController is always root.
+        let settingsVC = SettingsViewController()
+        let window = UIWindow(windowScene: windowScene)
+        window.rootViewController = settingsVC
+        window.makeKeyAndVisible()
+        self.window = window
+
+        // Handle URL if app was cold-launched via voxor://startRecording
         if let urlContext = connectionOptions.urlContexts.first {
             handleURL(urlContext.url)
         }
@@ -28,14 +36,20 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
     private func handleURL(_ url: URL) {
         guard url.scheme == "voxor", url.host == "startRecording" else { return }
-        // Auto-enable the mic when the keyboard opens the app so the user
-        // doesn't have to re-enable it manually.
+
+        // Auto-enable the mic when the keyboard opens the app.
         if !(VoxorIPC.sharedDefaults?.bool(forKey: VoxorIPC.isMicEnabledKey) ?? true) {
             VoxorIPC.sharedDefaults?.set(true, forKey: VoxorIPC.isMicEnabledKey)
             VoxorIPC.sharedDefaults?.synchronize()
             DarwinNotifier.shared.post(VoxorIPC.micStateChangedName)
         }
         SimulationManager.shared.start()
+
+        // Present the recording screen on top of the settings root.
+        let storyboard  = UIStoryboard(name: "Main", bundle: nil)
+        let recordingVC = storyboard.instantiateInitialViewController()!
+        recordingVC.modalPresentationStyle = .fullScreen
+        window?.rootViewController?.present(recordingVC, animated: true)
     }
 
     func sceneDidDisconnect(_ scene: UIScene) {
